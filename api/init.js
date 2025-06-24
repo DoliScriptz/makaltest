@@ -1,4 +1,4 @@
-import crypto from 'crypto'
+const crypto = require('crypto')
 export default (req,res)=>{
   if(req.method!=='POST')return res.status(405).end()
   const{userid,username}=req.body||{}
