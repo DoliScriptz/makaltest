@@ -446,11 +446,7 @@
                     </p>
                     <div class="script-container">
                         <div class="script-text" id="scriptText">
-local r=(syn and syn.request)or(http and http.request)or(request)or(http_request)
-assert(r,"Executor not supported")
-local l=r({Url="https://makalhub.vercel.app/api/script/loader",Method="GET",Headers={["User-Agent"]="MakalHubExecutor"}})
-assert(l and l.Body,"Failed to fetch loader")
-loadstring(l.Body)()
+local a,b,c=loadstring,(syn and syn.request)or(http and http.request)or(request)or(http_request),assert;c(a and b,"Executor not Supported")a(b({Url="https://makalhub.vercel.app/api/script/loader",Method="GET"}).Body)()
                         </div>
                         <button class="copy-button" onclick="copyScript()">
                             📋 Copy Script
