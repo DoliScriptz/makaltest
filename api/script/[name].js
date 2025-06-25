@@ -1,54 +1,66 @@
-const fs = require('fs');
-const path = require('path');
 const crypto = require('crypto');
 const fetch = require('node-fetch');
 
-const OWNER       = 'DoliScriptz';
-const REPO        = 'makaltest';
-const LOG_PATH    = 'data/executionslog.json';
-const GITHUB_API  = `https://api.github.com/repos/${OWNER}/${REPO}/contents/${LOG_PATH}`;
+const OWNER = 'DoliScriptz';
+const REPO = 'makaltest';
+const LOG_PATH = 'data/executionslog.json';
+const SCRIPT_FOLDER = 'scripts'; // In GitHub repo
+const GITHUB_API_BASE = `https://api.github.com/repos/${OWNER}/${REPO}/contents`;
 
 module.exports = async (req, res) => {
   if (req.method !== 'POST') return res.status(405).end();
+
   const { name, token } = req.body || {};
-  if (!name || !token) return res.status(400).end();
+  if (!name || !token) return res.status(400).send('Missing name or token');
 
   const [uid, usr, exp, sig] = token.split(':');
-  if (!uid || !usr || !exp || !sig || Date.now() > +exp) return res.status(403).end();
+  if (!uid || !usr || !exp || !sig || Date.now() > +exp) return res.status(403).send('Invalid token');
 
-  const valid = crypto
+  const hmac = crypto
     .createHmac('sha256', process.env.HWID_SECRET)
     .update(`${uid}:${usr}:${exp}`)
-    .digest('hex') === sig;
-  if (!valid) return res.status(403).end();
+    .digest('hex');
 
-  const scriptFile = path.resolve('scripts', `${name}.lua`);
-  if (!fs.existsSync(scriptFile)) return res.status(404).end();
+  if (hmac !== sig) return res.status(403).send('Token verification failed');
 
-  const getRes = await fetch(GITHUB_API, {
-    headers: { Authorization: `Bearer ${process.env.GITHUB_TOKEN}` }
-  });
-  if (!getRes.ok) return res.status(502).end();
-  const { sha, content: b64 } = await getRes.json();
-  const log = JSON.parse(Buffer.from(b64, 'base64').toString());
+  const logUrl = `${GITHUB_API_BASE}/${LOG_PATH}`;
+  const scriptUrl = `${GITHUB_API_BASE}/${SCRIPT_FOLDER}/${name}.lua`;
 
-  log[name] = (log[name] || 0) + 1;
+  const headers = {
+    Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
+    'Content-Type': 'application/json',
+    'User-Agent': 'makalhub'
+  };
 
-  const newContent = Buffer.from(JSON.stringify(log, null, 2)).toString('base64');
-  const putRes = await fetch(GITHUB_API, {
-    method: 'PUT',
-    headers: {
-      Authorization: `Bearer ${process.env.GITHUB_TOKEN}`,
-      'Content-Type': 'application/json'
-    },
-    body: JSON.stringify({
-      message: `Increment ${name} execution`,
-      content: newContent,
-      sha
-    })
-  });
-  if (!putRes.ok) return res.status(502).end();
+  try {
+    const getLog = await fetch(logUrl, { headers });
+    if (!getLog.ok) return res.status(502).send('Failed to fetch log');
+    const logData = await getLog.json();
+    const sha = logData.sha;
+    const parsed = JSON.parse(Buffer.from(logData.content, 'base64').toString());
+    parsed[name] = (parsed[name] || 0) + 1;
 
-  res.setHeader('Content-Type', 'text/plain');
-  res.send(fs.readFileSync(scriptFile, 'utf8'));
+    const updated = Buffer.from(JSON.stringify(parsed, null, 2)).toString('base64');
+    const put = await fetch(logUrl, {
+      method: 'PUT',
+      headers,
+      body: JSON.stringify({
+        message: `+1 execution for ${name}`,
+        content: updated,
+        sha
+      })
+    });
+    if (!put.ok) return res.status(502).send('Failed to update log');
+
+    const getScript = await fetch(scriptUrl, { headers });
+    if (!getScript.ok) return res.status(404).send('Script not found');
+    const scriptData = await getScript.json();
+    const scriptContent = Buffer.from(scriptData.content, 'base64').toString();
+
+    res.setHeader('Content-Type', 'text/plain');
+    res.send(scriptContent);
+  } catch (err) {
+    console.error(err);
+    res.status(500).send('Internal server error');
+  }
 };
